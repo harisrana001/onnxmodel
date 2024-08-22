@@ -3,35 +3,65 @@ from pydantic import BaseModel
 import onnxruntime as ort
 import numpy as np
 import os
+import pandas as pd
 
 app = FastAPI()
 
-# Load the ONNX mo
-# Assuming `embedding_index` and `mapp` are already loaded
-# `embedding_index` is a dictionary mapping words to GloVe vectors
-# `mapp` is a dictionary mapping class indices to emojis
+
+# Utility functions to load GloVe embeddings and mapping
+def load_glove_embeddings(filepath):
+    embedding_index = {}
+    with open(filepath, 'r', encoding='utf8') as f:
+        for line in f:
+            values = line.split()
+            word = values[0]
+            emb = np.array(values[1:], dtype='float32')
+            embedding_index[word] = emb
+    return embedding_index
+
+
+def load_mapping(filepath):
+    mapping_df = pd.read_csv(filepath)
+    emoticons = mapping_df['emoticons'].tolist()
+    return {idx: emoticons[idx] for idx in range(len(emoticons))}
+
+
+# Load the ONNX model
+model_path = os.path.join('model_files', 'model.onnx')
+session = ort.InferenceSession(model_path)
+
+# Load the GloVe embeddings and emoji mapping
+glove_path = os.path.join('glove.6B.50d.txt')
+embedding_index = load_glove_embeddings(glove_path)
+
+mapping_path = os.path.join('model_files', 'Mapping.csv')
+mapp = load_mapping(mapping_path)
+
 
 class TextInput(BaseModel):
     text: str
 
+
 def preprocess_text(text, max_len=10):
-    tokens = text.lower().split()  # Tokenize and convert to lowercase
-    embedding_output = np.zeros((1, max_len, 50))  # Initialize with zeros (1 sample, max_len, 50-dim embeddings)
+    tokens = text.lower().split()
+    embedding_output = np.zeros((1, max_len, 50))
 
     for i, token in enumerate(tokens):
         if i >= max_len:
-            break  # Truncate to max_len
+            break
         embedding_vector = embedding_index.get(token)
         if embedding_vector is not None:
             embedding_output[0, i] = embedding_vector
 
     return embedding_output
 
+
 def process_output(ort_outs):
-    probabilities = ort_outs[0][0]  # Get the first output, first sample
-    predicted_class = np.argmax(probabilities)  # Get the index of the highest probability
-    predicted_emoji = mapp[predicted_class]  # Map to emoji
+    probabilities = ort_outs[0][0]
+    predicted_class = np.argmax(probabilities)
+    predicted_emoji = mapp[predicted_class]
     return predicted_emoji
+
 
 @app.post("/predict")
 def predict_emoji(input: TextInput):
